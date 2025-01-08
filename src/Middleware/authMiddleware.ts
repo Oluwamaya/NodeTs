@@ -3,11 +3,11 @@
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { Request, Response, NextFunction } from 'express';
-import { UserModel } from '../Models/model';
+import { UserModel } from '../Models/userModel';
 import pool from '../Config/database';
 
 const JWT_SECRET = process.env.JWT_SECRET || ""; 
-console.log(JWT_SECRET)// JWT secret key
+ 
 
 // Middleware to hash the user's password
 export const hashPassword = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -58,14 +58,13 @@ export const generateToken = async (req: Request, res: Response, next: NextFunct
     }
 
     // Generate JWT token
+    const tokenExpiry = new Date(Date.now() + 10 * 60 * 1000); // 1 min from now
     const token = jwt.sign(
-      { id: user.id, role: user.role }, // Payload
-      JWT_SECRET, // Secret key
-      { expiresIn: "1h" } // Token expiry time
+      { id: user.id, role: user.role, exp: Math.floor(tokenExpiry.getTime() / 1000) }, // Payload with expiry
+      JWT_SECRET // Secret key
     );
 
     // Save token and expiry time in the database
-    const tokenExpiry = new Date(Date.now() + 60 * 60 * 1000); // 1 hour from now
     await UserModel.saveToken(user.id, token, tokenExpiry);
 
     // Attach the token to the response
@@ -74,7 +73,8 @@ export const generateToken = async (req: Request, res: Response, next: NextFunct
       id: user.id,
       email: user.email,
       role: user.role,
-      name: user.name,
+      firstname: user.firstname,
+      lastname : user.lastname,
     };
 
     next(); // Proceed to the next middleware or controller
@@ -86,7 +86,6 @@ export const generateToken = async (req: Request, res: Response, next: NextFunct
 
 
 export const validateToken = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
- console.log(req.headers.authorization)
   const token = req.headers.authorization?.split(" ")[1];
 
   if (!token) {
@@ -95,24 +94,44 @@ export const validateToken = async (req: Request, res: Response, next: NextFunct
   }
 
   try {
+    // Decode and verify JWT token
     const decoded: any = jwt.verify(token, JWT_SECRET);
+    const now = new Date();
 
     // Check token validity in the database
     const [rows]: any = await pool.execute(
       "SELECT * FROM tokens WHERE userId = ? AND token = ? AND token_expiry > ?",
-      [decoded.id, token, new Date()]
+      [decoded.id, token, now.toISOString()]
     );
-
+   
+     
     if (!rows.length) {
-      res.status(401).json({ message: "Invalid or expired token." });
+      res.status(401).json({ message: "Invalid or expired token in the database." });
       return;
     }
+   const [fetchInfo]: any = await pool.execute( "SELECT * FROM users WHERE id = ?  ", [rows[0].userId]) 
 
-    res.locals.user = rows[0]; // Attach user details to locals
+   if (!fetchInfo) {
+     res.status(404).send({message : "User Not found" , status : false})
+     return
+   }
+   
+   
+    // Attach user details to locals
+    res.locals.user = fetchInfo[0];
     next();
-  } catch (error : any) {
-    console.error("Token validation error:", error.message);
-    res.status(401).json({ message: "Invalid or expired token." });
+  } catch (error: any) {
+    if (error.name === "TokenExpiredError") {
+      res.status(401).json({ message: "JWT token has expired." });
+      console.log(error.message);
+      
+      
+    } else {
+      console.error("Token validation error:", error.message);
+      res.status(401).json({ message: "Invalid or expired token." });
+    }
   }
 };
+
+
 
