@@ -1,31 +1,52 @@
-import  express  from "express";
-const app = express()
-import  dotenv from "dotenv"
+import express from "express";
+import dotenv from "dotenv";
 import pool from "./src/Config/database";
 import userRouter from "./src/Router/Router";
+import { logger, requestLogger, errorHandler } from "./src/Core/logger";
 
+dotenv.config();
 
-dotenv.config()
+const app = express();
+const port = process.env.PORT || 3000;
 
-const port  = process.env.port || 3000 ;
+// Middleware to parse JSON
+app.use(express.json());
 
-app.use(express.json())
-app.use("/api", userRouter)
+// Logger for incoming requests
+app.use(requestLogger);
 
-app.get("/", (req , res) =>{
-    res.send("maya is here")
-})
+// Routes
+app.use("/api", userRouter);
 
+app.get("/", (req, res) => {
+  res.send("Maya is here");
+});
 
-app.listen(port, async () =>{
- console.log(`Server is running on port ${port}`);
- await pool
- 
-})
+// Global error handling middleware
+app.use(errorHandler);
+
+// Start the server
+app.listen(port, async () => {
+  try {
+    logger.info(`Server is starting on port ${port}`);
+    await pool; // Ensuring database pool connection is active
+    logger.info("Database connection established successfully");
+    logger.info(`Server is running on port ${port}`);
+  } catch (error) {
+    logger.error("Error starting the server: ", error);
+    process.exit(1); // Exit the process if server startup fails
+  }
+});
 
 // Graceful shutdown logic to handle process termination
-process.on('SIGINT', async () => {
-    console.log("Shutting down server...");
-    await pool.end();  // Close the database connection gracefully
-    process.exit(0);   // Exit the process
+process.on("SIGINT", async () => {
+  logger.info("Shutting down server gracefully...");
+  try {
+    await pool.end(); // Close the database connection gracefully
+    logger.info("Database connection closed successfully");
+    process.exit(0); // Exit the process
+  } catch (error) {
+    logger.error("Error during shutdown: ", error);
+    process.exit(1);
+  }
 });

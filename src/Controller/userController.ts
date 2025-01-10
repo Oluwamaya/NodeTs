@@ -1,31 +1,32 @@
-// src/controllers/authController.ts
-
 import { Request, Response } from 'express';
 import { UserModel } from '../Models/userModel';
 import { hashPassword, generateToken } from '../Middleware/authMiddleware';
-import { promises } from 'dns';
 import cloudinary from '../Utils/cloudinaryConfig';
-import { profile } from 'console';
+import {logger} from '../Core/logger';
 
 export const signupUser = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { firstname,lastname, email, password, role , gender } = req.body;
+    const { firstname, lastname, email, password, role, gender } = req.body;
 
     // Validate input data
     if (!firstname || !lastname || !email || !password || !role) {
+      logger.warn("Sign-Up Validation Failed: Missing required fields.", { firstname, lastname, email, role });
       res.status(400).json({ message: "Please provide all required fields." });
       return;
     }
-      // Validate email format
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(email)) {
-        res.status(400).json({ message: "Invalid email format." });
-        return;
-      }
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      logger.warn("Invalid Email Format Provided", { email });
+      res.status(400).json({ message: "Invalid email format." });
+      return;
+    }
 
     // Validate allowed roles
     const allowedRoles = ["admin", "staff"];
     if (!allowedRoles.includes(role)) {
+      logger.warn("Invalid Role Provided", { role });
       res.status(400).json({ message: "Invalid role. Allowed roles are 'admin' or 'staff'." });
       return;
     }
@@ -34,6 +35,7 @@ export const signupUser = async (req: Request, res: Response): Promise<void> => 
     if (role === "admin") {
       const existingAdmin = await UserModel.findByRole("admin");
       if (existingAdmin) {
+        logger.warn("Admin Registration Attempted When Admin Already Exists.");
         res.status(400).json({ message: "An admin account already exists." });
         return;
       }
@@ -42,6 +44,7 @@ export const signupUser = async (req: Request, res: Response): Promise<void> => 
     // Check if the user already exists
     const existingUser = await UserModel.findByEmail(email);
     if (existingUser) {
+      logger.warn("Sign-Up Attempt with Existing Email", { email });
       res.status(400).json({ message: "Email already exists." });
       return;
     }
@@ -49,43 +52,42 @@ export const signupUser = async (req: Request, res: Response): Promise<void> => 
     // Hash the password using middleware
     hashPassword(req, res, async () => {
       const hashedPassword = req.body.hashedPassword;
-      const profilePic = "https://i.pinimg.com/474x/18/b5/b5/18b5b599bb873285bd4def283c0d3c09.jpg"; // Set a default profile picture URL
-     
+      const profilePic = "https://i.pinimg.com/474x/18/b5/b5/18b5b599bb873285bd4def283c0d3c09.jpg"; // Default profile picture URL
 
       // Create the user with the hashed password
-      const newUser = await UserModel.create(firstname ,lastname, email, hashedPassword, role , profilePic ,gender);
+      const newUser = await UserModel.create(firstname, lastname, email, hashedPassword, role, profilePic, gender);
 
-      // Respond with the created user
+      logger.info("User Created Successfully", { userId: newUser.id, email: newUser.email });
       res.status(201).json({ message: "User created successfully", user: newUser });
     });
   } catch (error: any) {
-    console.error(error.message);
+    logger.error("Sign-Up Error", { error: error.message });
     res.status(500).json({ message: "An error occurred during sign-up." });
   }
 };
 
 export const signIn = async (req: Request, res: Response): Promise<void> => {
   try {
-    // Retrieve token and user details from res.locals (set by generateToken middleware)
     const token = res.locals.token;
     const user = res.locals.user;
 
     if (!token || !user) {
+      logger.warn("Sign-In Failed: Missing Token or User Details.");
       res.status(500).json({ message: "Token or user details are missing. Please try again." });
       return;
     }
 
+    logger.info("Sign-In Successful", { userId: user.id, email: user.email });
     res.status(200).json({
       message: "Sign-in successful.",
       token,
       user: {
-       
-        firstname: user.firstname, 
-        lastname: user.lastname, 
+        firstname: user.firstname,
+        lastname: user.lastname,
       },
     });
-  } catch (error : any) {
-    console.error("Error in signIn controller:", error.message);
+  } catch (error: any) {
+    logger.error("Sign-In Error", { error: error.message });
     res.status(500).json({ message: "An error occurred during sign-in. Please try again later." });
   }
 };
@@ -93,77 +95,61 @@ export const signIn = async (req: Request, res: Response): Promise<void> => {
 export const getUserDashboard = async (req: Request, res: Response): Promise<void> => {
   const user = res.locals.user;
 
+  logger.info("Dashboard Accessed", { userId: user.id, email: user.email });
   res.status(200).json({
     message: "Welcome to your dashboard!",
-   user
+    user,
   });
 };
 
-
-
 export const updateInfo = async (req: Request, res: Response): Promise<void> => {
   try {
-    console.log(req.body);
-    
     const { profilePic, firstname, lastname, gender, id } = req.body;
-    console.log(res.locals.user);
-    
-    const { userId: requesterId, role: requesterRole } = res.locals.user; 
+    const { userId: requesterId, role: requesterRole } = res.locals.user;
 
-
-    // Validate ID field
     if (!id) {
+      logger.warn("Update Info Failed: Missing User ID.", { requesterId });
       res.status(400).json({ error: "User ID is required" });
       return;
     }
 
-    // Enforce role-based permissions
-    // if (requesterRole === "staff" && requesterId !== id) {
-    //   res.status(403).json({ error: "Access denied. Staff can only update their own profile." });
-    //   return;
-    // }
-
     if (requesterRole === "staff" && (firstname || lastname || gender)) {
+      logger.warn("Unauthorized Update Attempt by Staff", { requesterId });
       res.status(403).json({ error: "Staff can only update their profile picture." });
       return;
     }
 
     let uploadedImageUrl = profilePic;
-
     if (profilePic) {
-      // Upload new profile picture if provided
       const uploadResult = await cloudinary.uploader.upload(profilePic, {
         folder: "user_profiles",
         transformation: [{ width: 300, height: 300, crop: "limit" }],
       });
       uploadedImageUrl = uploadResult.secure_url;
+      logger.info("Profile Picture Uploaded", { userId: requesterId, imageUrl: uploadedImageUrl });
     }
 
     const updatedFields: any = { profilePic: uploadedImageUrl };
-
     if (requesterRole === "admin") {
-      // Admins can update all fields
       updatedFields.firstname = firstname;
       updatedFields.lastname = lastname;
       updatedFields.gender = gender;
-      // updatedFields.profilePic = profilePic
     }
 
-    // Perform the update
     const updatedUser = await UserModel.updateUserInfo(id, updatedFields);
-
     if (!updatedUser) {
+      logger.warn("Update Failed: User Not Found or Not Updated", { id });
       res.status(404).json({ error: "User not found or not updated" });
       return;
     }
 
+    logger.info("User Information Updated Successfully", { userId: id, updatedFields });
     res.status(200).json({
       message: "User information updated successfully",
       user: updatedUser,
     });
   } catch (error: any) {
-    console.error(error);
+    logger.error("Error Updating User Info", { error: error.message });
     res.status(500).json({ error: `Error updating user info: ${error.message}` });
   }
 };
-
