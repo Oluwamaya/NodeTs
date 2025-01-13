@@ -1,6 +1,7 @@
 import mysql from 'mysql2/promise'
 
 import dotenv from 'dotenv'
+import {logger} from '../Core/logger'
 
 dotenv.config()
 
@@ -18,10 +19,12 @@ const pool = mysql.createPool({
 const testConnection = async () => {
     try {
         const connection = await pool.getConnection();
-        console.log("Database connected successfully!");
+        logger.info("Database connected successfully")
+        
         connection.release();
     } catch (error : any) {
-        console.error("Error connecting to the database:", error.message);
+        logger.error("Error connecting to the database" , error.message)
+        // console.error("Error connecting to the database:", error.message);
         if (error.code === 'ER_ACCESS_DENIED_ERROR') {
             console.error("Access denied! Check your username and password.");
         }

@@ -2,34 +2,24 @@ import { Request, Response } from 'express';
 import { UserModel } from '../Models/userModel';
 import { hashPassword, generateToken } from '../Middleware/authMiddleware';
 import cloudinary from '../Utils/cloudinaryConfig';
-import {logger} from '../Core/logger';
+import { logger } from '../Core/logger';
+
+import { signInSchema, signupSchema, updateInfoSchema } from '../Middleware/ValidationSchema';
+
+
+
 
 export const signupUser = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { firstname, lastname, email, password, role, gender } = req.body;
-
-    // Validate input data
-    if (!firstname || !lastname || !email || !password || !role) {
-      logger.warn("Sign-Up Validation Failed: Missing required fields.", { firstname, lastname, email, role });
-      res.status(400).json({ message: "Please provide all required fields." });
+    // Validate input data with Joi
+    const { error, value } = signupSchema.validate(req.body);
+    if (error) {
+      logger.warn("Sign-Up Validation Failed", { details: error.details });
+      res.status(400).json({ message: error.message });
       return;
     }
 
-    // Validate email format
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      logger.warn("Invalid Email Format Provided", { email });
-      res.status(400).json({ message: "Invalid email format." });
-      return;
-    }
-
-    // Validate allowed roles
-    const allowedRoles = ["admin", "staff"];
-    if (!allowedRoles.includes(role)) {
-      logger.warn("Invalid Role Provided", { role });
-      res.status(400).json({ message: "Invalid role. Allowed roles are 'admin' or 'staff'." });
-      return;
-    }
+    const { firstname, lastname, email, password, role, gender } = value;
 
     // Restrict multiple admin registrations
     if (role === "admin") {
@@ -54,11 +44,10 @@ export const signupUser = async (req: Request, res: Response): Promise<void> => 
       const hashedPassword = req.body.hashedPassword;
       const profilePic = "https://i.pinimg.com/474x/18/b5/b5/18b5b599bb873285bd4def283c0d3c09.jpg"; // Default profile picture URL
 
-      // Create the user with the hashed password
       const newUser = await UserModel.create(firstname, lastname, email, hashedPassword, role, profilePic, gender);
 
       logger.info("User Created Successfully", { userId: newUser.id, email: newUser.email });
-      res.status(201).json({ message: "User created successfully", user: newUser });
+      res.status(201).json({ message: "User created successfully", status : true });
     });
   } catch (error: any) {
     logger.error("Sign-Up Error", { error: error.message });
@@ -68,6 +57,14 @@ export const signupUser = async (req: Request, res: Response): Promise<void> => 
 
 export const signIn = async (req: Request, res: Response): Promise<void> => {
   try {
+    // Validate input data with Joi
+    const { error, value } = signInSchema.validate(req.body);
+    if (error) {
+      logger.warn("Sign-In Validation Failed", { details: error.details });
+      res.status(400).json({ message: error.message });
+      return;
+    }
+
     const token = res.locals.token;
     const user = res.locals.user;
 
@@ -95,23 +92,26 @@ export const signIn = async (req: Request, res: Response): Promise<void> => {
 export const getUserDashboard = async (req: Request, res: Response): Promise<void> => {
   const user = res.locals.user;
 
-  logger.info("Dashboard Accessed", { userId: user.id, email: user.email });
+  logger.info("Dashboard Accessed", { userInfo : user});
   res.status(200).json({
     message: "Welcome to your dashboard!",
     user,
   });
 };
 
+
 export const updateInfo = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { profilePic, firstname, lastname, gender, id } = req.body;
-    const { userId: requesterId, role: requesterRole } = res.locals.user;
-
-    if (!id) {
-      logger.warn("Update Info Failed: Missing User ID.", { requesterId });
-      res.status(400).json({ error: "User ID is required" });
+    // Validate input data with Joi
+    const { error, value } = updateInfoSchema.validate(req.body);
+    if (error) {
+      logger.warn("Update Info Validation Failed", { details: error.details });
+      res.status(400).json({ message: error.message });
       return;
     }
+
+    const { id, profilePic, firstname, lastname, gender } = value;
+    const { userId: requesterId, role: requesterRole } = res.locals.user;
 
     if (requesterRole === "staff" && (firstname || lastname || gender)) {
       logger.warn("Unauthorized Update Attempt by Staff", { requesterId });
